@@ -45,6 +45,7 @@ import socket
 import sys
 import traceback
 import threading
+import yara
 # LATER: multiprocessing to parse regex
 import time
 from io import open
@@ -321,6 +322,20 @@ class Pastie():
                 # we have a match, add to match list
                 self.matches.append(regex)
                 self.matched = True
+
+        # search for the yara
+        try:
+            # yara scan
+            yara_result = yara_rules.match(data=self.pastie_content)
+            if yara_result:
+                for yara_match in yara_result:
+                    for s in yara_match.strings:
+                        rule_match = s[1].lstrip('$')
+                        self.matches.append(rule_match)
+                        self.matches.append(str(yara_match.rule))
+        except:
+            pass
+
 
     def action_on_match(self):
         msg = 'Found hit for {matches} in pastie {url}'.format(
@@ -659,10 +674,21 @@ class PastieSearch():
                 self.h[k] = v
         return self.h
 
+
+def yara_index(rule_path):
+    index_file = os.path.join(rule_path, 'index.yar')
+    with open(index_file, 'w') as yar:
+        for filename in os.listdir(rule_path):
+            if filename.endswith('.yar') and filename != 'index.yar':
+                include = 'include "{0}"\n'.format(filename)
+                yar.write(include)
+
+
 def main(storage_engines):
     global queues
     global threads
     global patterns
+    global yara_rules
     queues = {}
     threads = []
     patterns = []
@@ -700,6 +726,16 @@ def main(storage_engines):
                exit("Error: Unable to parse regex '%s': %s" % (search, e))
             else:
                logger.error("Error: Unable to parse regex '%s': %s" % (search, e))
+
+    # compile yara rule
+    try:
+        yara_rule_path = './yara_rules'
+        yara_index(yara_rule_path)
+        index_file = os.path.join(yara_rule_path, 'index.yar')
+        yara_rules = yara.compile(index_file)
+    except Exception as e:
+        print("Unable to Create Yara index: ", e)
+        sys.exit()
 
     # start thread for proxy file listener
     if yamlconfig['proxy']['random']:
